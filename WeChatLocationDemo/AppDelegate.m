@@ -11,7 +11,7 @@
 #import <AMapLocationKit/AMapLocationKit.h>
 #import <AMapFoundationKit/AMapFoundationKit.h>
 
-static NSString *APIKey = @"8ee06d5afe79cdc9d0ef373fd5f122e0";
+static NSString *APIKey = @"a1500980e29b7ca7612a46c19e0d2e3a";
 
 @interface AppDelegate ()
 

@@ -14,7 +14,12 @@
 #import <AMapSearchKit/AMapSearchKit.h>
 #import "POITableViewCell.h"
 #import "MJRefresh.h"
+#import "UIViewController+HUD.h"
 
+/** 设备的宽 */
+#define SCREEN_WIDTH [UIScreen mainScreen].bounds.size.width
+/** 设备的高 */
+#define SCREEN_HEIGHT [UIScreen mainScreen].bounds.size.height
 
 @interface ViewController ()<UISearchControllerDelegate,UISearchResultsUpdating,MAMapViewDelegate,AMapLocationManagerDelegate,AMapSearchDelegate,UITableViewDelegate,UITableViewDataSource>
 @property (nonatomic, strong)UISearchController *searchController;
@@ -33,6 +38,9 @@
 @property (nonatomic ,strong)UITableView *searchTableView;//用于搜索的tableView
 @property (nonatomic ,strong)NSArray *tipsArray;//搜索提示的数组
 
+@property (nonatomic ,strong)AMapPOI *currentPOI;//点击选择的当前的位置插入到数组中
+
+
 @end
 
 @implementation ViewController
@@ -43,8 +51,8 @@
     [self setUpSearchController];
     self.view.backgroundColor = [UIColor groupTableViewBackgroundColor];
     self.currentPage = 1;
-    [self.view addSubview:self.tableView];
     [self initMapView];
+    [self.view addSubview:self.tableView];
     [self configLocationManager];
     [self locateAction];
     
@@ -67,7 +75,7 @@
     self.searchController.dimsBackgroundDuringPresentation = NO;
     
     UISearchBar *bar = self.searchController.searchBar;
-    bar.frame = CGRectMake(0, 64, 375, 44);
+    bar.frame = CGRectMake(0, 64, SCREEN_WIDTH, 44);
     bar.barStyle = UIBarStyleDefault;
     bar.translucent = YES;
     bar.barTintColor = [UIColor groupTableViewBackgroundColor];
@@ -90,19 +98,28 @@
 }
 
 - (void)initMapView{
-    self.mapView = [[MAMapView alloc] initWithFrame:CGRectMake(0, 64 + 44, 375, 300)];
+    self.mapView = [[MAMapView alloc] initWithFrame:CGRectMake(0, 64 + 44, SCREEN_WIDTH, 300)];
     self.mapView.delegate = self;
     self.mapView.mapType = MAMapTypeStandard;
     self.mapView.showsScale = NO;
     self.mapView.showsCompass = NO;
     self.mapView.showsUserLocation = YES;
-
     [self.view addSubview:self.mapView];
+    
+    UIButton *localButton = [UIButton buttonWithType:UIButtonTypeCustom];
+    localButton.backgroundColor = [UIColor redColor];
+    localButton.frame = CGRectMake(SCREEN_WIDTH - 60, 240, 50, 50);
+    [localButton addTarget:self action:@selector(localButtonAction) forControlEvents:UIControlEventTouchUpInside];
+    localButton.layer.cornerRadius = 25;
+    localButton.clipsToBounds = YES;
+    [localButton setImage:[UIImage imageNamed:@"定位"] forState:UIControlStateNormal];
+    [self.mapView addSubview:localButton];
+    
 }
 
 - (UITableView *)tableView{
     if (_tableView == nil) {
-        _tableView = [[UITableView alloc] initWithFrame:CGRectMake(0, 408, 375, 667 - 408) style:UITableViewStylePlain];
+        _tableView = [[UITableView alloc] initWithFrame:CGRectMake(0, 408, SCREEN_WIDTH, SCREEN_HEIGHT - 408) style:UITableViewStylePlain];
         _tableView.delegate = self;
         _tableView.dataSource = self;
         _tableView.tableFooterView = [UIView new];
@@ -118,7 +135,7 @@
 
 - (UITableView *)searchTableView{
     if (_searchTableView == nil) {
-        _searchTableView = [[UITableView alloc] initWithFrame:CGRectMake(0, 64, 375, 667 - 64) style:UITableViewStylePlain];
+        _searchTableView = [[UITableView alloc] initWithFrame:CGRectMake(0, 64, SCREEN_WIDTH, SCREEN_HEIGHT - 64) style:UITableViewStylePlain];
         _searchTableView.delegate = self;
         _searchTableView.dataSource = self;
         _searchTableView.tableFooterView = [UIView new];
@@ -141,9 +158,11 @@
 }
 
 - (void)locateAction {
+    [self showHudInView:self.view hint:@"正在定位..."];
     //带逆地理的单次定位
     [self.locationManager requestLocationWithReGeocode:YES completionBlock:^(CLLocation *location, AMapLocationReGeocode *regeocode, NSError *error) {
         if (error) {
+            [self showHint:@"定位错误" yOffset:-180];
             NSLog(@"locError:{%ld - %@};",(long)error.code,error.localizedDescription);
             if (error.code == AMapLocationErrorLocateFailed) {
                 return ;
@@ -151,23 +170,19 @@
         }
         //定位信息
         NSLog(@"location:%@", location);
-
         if (regeocode)
         {
+            [self hideHud];
             self.currentLocationCoordinate = CLLocationCoordinate2DMake(location.coordinate.latitude, location.coordinate.longitude);
             self.city = regeocode.city;
             [self showMapPoint];
             [self setCenterPoint];
             self.request.location = [AMapGeoPoint locationWithLatitude:location.coordinate.latitude longitude:location.coordinate.longitude];
             [self.mapSearch AMapPOIAroundSearch:self.request];
-
-
-            
         }
     }];
-
+    
 }
-
 
 - (void)showMapPoint{
     [_mapView setZoomLevel:15.1 animated:YES];
@@ -215,8 +230,10 @@
     centerAnnotation.title = @"";
     centerAnnotation.subtitle = @"";
     [self.mapView addAnnotation:centerAnnotation];
+    //主动选择地图上的地点
     if (!self.isSelectedAddress) {
-        self.selectedIndexPath=[NSIndexPath indexPathForRow:-1 inSection:-1];
+        [self.tableView setContentOffset:CGPointMake(0,0) animated:NO];
+        self.selectedIndexPath=[NSIndexPath indexPathForRow:0 inSection:0];
         self.request.location = [AMapGeoPoint locationWithLatitude:centerCoordinate.latitude longitude:centerCoordinate.longitude];
         self.currentPage = 1;
         self.request.page = self.currentPage;
@@ -229,7 +246,10 @@
 
 #pragma mark -AMapSearchDelegate
 - (void)onPOISearchDone:(AMapPOISearchBaseRequest *)request response:(AMapPOISearchResponse *)response{
-    NSArray *remoteArray = response.pois;
+    NSMutableArray *remoteArray = response.pois.mutableCopy;
+    if (self.currentPOI) {
+        [remoteArray insertObject:self.currentPOI atIndex:0];
+    }
     if (self.currentPage == 1) {
         self.dataArray = remoteArray;
     }else{
@@ -309,6 +329,15 @@
         [_mapView setCenterCoordinate:locationCoordinate animated:YES];
         self.selectedIndexPath = [NSIndexPath indexPathForRow:0 inSection:0];
         [self.tableView reloadData];
+                
+        AMapPOI *POIModel = [AMapPOI new];
+        POIModel.address = [NSString stringWithFormat:@"%@%@",tipModel.district,tipModel.address];
+        POIModel.location = tipModel.location;
+        POIModel.name = tipModel.name;
+        self.currentPOI = POIModel;
+        [self.tableView reloadData];
+        
+        
     }
     
 
@@ -335,27 +364,31 @@
     tips.keywords = searchController.searchBar.text;
     tips.city = self.city;
     [self.mapSearch AMapInputTipsSearch:tips];
-
+    
 }
 
-#pragma mark - UISearchControllerDelegate代理,可以省略,主要是为了验证打印的顺序
-//测试UISearchController的执行过程
 
-- (void)willPresentSearchController:(UISearchController *)searchController
-{
+#pragma mark - UISearchControllerDelegate代理
+- (void)willPresentSearchController:(UISearchController *)searchController{
     self.searchController.searchBar.frame = CGRectMake(0, 0, self.searchController.searchBar.frame.size.width, 44.0);
-    self.mapView.frame = CGRectMake(0, 64, 375, 300);
-
+    self.mapView.frame = CGRectMake(0, 64, SCREEN_WIDTH, 300);
+//    self.tableView.frame = CGRectMake(0, 364, SCREEN_WIDTH, SCREEN_HEIGHT - 364);
+    NSLog(@"ss---%@",NSStringFromCGRect(self.tableView.frame));
+    
 }
-
 
 - (void)didDismissSearchController:(UISearchController *)searchController{
     self.searchController.searchBar.frame = CGRectMake(0, 64, self.searchController.searchBar.frame.size.width, 44.0);
-    self.mapView.frame = CGRectMake(0, 64 + 44, 375, 300);
-
+    self.mapView.frame = CGRectMake(0, 64 + 44, SCREEN_WIDTH, 300);
+//    self.tableView.frame = CGRectMake(0, 408, SCREEN_WIDTH, SCREEN_HEIGHT - 408);
     [self.searchTableView removeFromSuperview];
 }
 
+
+
+- (void)localButtonAction{
+    [self locateAction];
+}
 
 
 
