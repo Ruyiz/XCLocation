@@ -37,9 +37,9 @@
 
 @property (nonatomic ,strong)UITableView *searchTableView;//用于搜索的tableView
 @property (nonatomic ,strong)NSArray *tipsArray;//搜索提示的数组
-
+@property (nonatomic ,strong)NSMutableArray *remoteArray;
 @property (nonatomic ,strong)AMapPOI *currentPOI;//点击选择的当前的位置插入到数组中
-
+@property (nonatomic ,assign)BOOL isClickPoi;
 
 @end
 
@@ -55,7 +55,7 @@
     [self.view addSubview:self.tableView];
     [self configLocationManager];
     [self locateAction];
-    
+    self.remoteArray = @[].mutableCopy;
     self.mapSearch = [[AMapSearchAPI alloc] init];
     self.mapSearch.delegate = self;
     
@@ -144,16 +144,12 @@
 }
 
 // 定位SDK
-
 - (void)configLocationManager {
     self.locationManager = [[AMapLocationManager alloc] init];
-    
     [self.locationManager setDelegate:self];
-    
     [self.locationManager setDesiredAccuracy:kCLLocationAccuracyHundredMeters];
-    
+    //单次定位超时时间
     [self.locationManager setLocationTimeout:6];
-    
     [self.locationManager setReGeocodeTimeout:3];
 }
 
@@ -173,6 +169,7 @@
         if (regeocode)
         {
             [self hideHud];
+            self.isClickPoi = NO;
             self.currentLocationCoordinate = CLLocationCoordinate2DMake(location.coordinate.latitude, location.coordinate.longitude);
             self.city = regeocode.city;
             [self showMapPoint];
@@ -232,6 +229,7 @@
     [self.mapView addAnnotation:centerAnnotation];
     //主动选择地图上的地点
     if (!self.isSelectedAddress) {
+        self.isClickPoi = NO;
         [self.tableView setContentOffset:CGPointMake(0,0) animated:NO];
         self.selectedIndexPath=[NSIndexPath indexPathForRow:0 inSection:0];
         self.request.location = [AMapGeoPoint locationWithLatitude:centerCoordinate.latitude longitude:centerCoordinate.longitude];
@@ -247,7 +245,8 @@
 #pragma mark -AMapSearchDelegate
 - (void)onPOISearchDone:(AMapPOISearchBaseRequest *)request response:(AMapPOISearchResponse *)response{
     NSMutableArray *remoteArray = response.pois.mutableCopy;
-    if (self.currentPOI) {
+    self.remoteArray = remoteArray;
+    if (self.isClickPoi) {
         [remoteArray insertObject:self.currentPOI atIndex:0];
     }
     if (self.currentPage == 1) {
@@ -335,6 +334,7 @@
         POIModel.location = tipModel.location;
         POIModel.name = tipModel.name;
         self.currentPOI = POIModel;
+        self.isClickPoi = YES;
         [self.tableView reloadData];
         
         
